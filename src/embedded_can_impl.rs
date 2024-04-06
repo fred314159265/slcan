@@ -1,16 +1,23 @@
 use crate::{CanFrame, CanSocket};
-use embedded_can::{Can, Frame, Id};
+use embedded_can::blocking::Can;
+use embedded_can::{Frame, Id};
 use serial_core::SerialPort;
-use std::io;
+
+impl embedded_can::Error for crate::Error {
+    fn kind(&self) -> embedded_can::ErrorKind {
+        // SLCAN doesn't support reporting CAN specific errors.
+        embedded_can::ErrorKind::Other
+    }
+}
 
 impl Frame for CanFrame {
-    fn new(id: impl Into<Id>, data: &[u8]) -> Result<Self, ()> {
-        Ok(CanFrame::new(id.into(), data.len(), data))
+    fn new(id: impl Into<Id>, data: &[u8]) -> Option<Self> {
+        Some(CanFrame::new(id.into(), data.len(), data))
     }
 
-    fn new_remote(_id: impl Into<Id>, _dlc: usize) -> Result<Self, ()> {
+    fn new_remote(_id: impl Into<Id>, _dlc: usize) -> Option<Self> {
         // currently unsupported
-        Err(())
+        None
     }
 
     fn is_extended(&self) -> bool {
@@ -37,31 +44,15 @@ impl Frame for CanFrame {
 
 impl<P: SerialPort> Can for CanSocket<P> {
     type Frame = CanFrame;
+    type Error = crate::Error;
 
-    type Error = io::Error;
-
-    fn try_transmit(
-        &mut self,
-        frame: &Self::Frame,
-    ) -> nb::Result<Option<Self::Frame>, Self::Error> {
-        self.write(frame.id, frame.data())
-            .map(|_| None)
-            .map_err(|io_err| {
-                if io_err.kind() == io::ErrorKind::WouldBlock {
-                    nb::Error::WouldBlock
-                } else {
-                    nb::Error::Other(io_err)
-                }
-            })
+    fn transmit(&mut self, frame: &Self::Frame) -> Result<(), Self::Error> {
+        _ = self.write(frame.id, frame.data())?;
+        Ok(())
     }
 
-    fn try_receive(&mut self) -> nb::Result<Self::Frame, Self::Error> {
-        self.read().map_err(|io_err| {
-            if io_err.kind() == io::ErrorKind::WouldBlock {
-                nb::Error::WouldBlock
-            } else {
-                nb::Error::Other(io_err)
-            }
-        })
+    fn receive(&mut self) -> Result<Self::Frame, Self::Error> {
+        let frame = self.read()?;
+        Ok(frame)
     }
 }

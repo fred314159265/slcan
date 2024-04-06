@@ -2,12 +2,12 @@ extern crate serial_core as serial;
 
 pub use embedded_can::{ExtendedId, Id, StandardId};
 use serial::prelude::*;
+#[cfg(target_family = "unix")]
+use std::os::unix::prelude::AsRawFd;
 use std::{
     convert::{TryFrom, TryInto},
     io,
 };
-#[cfg(target_family = "unix")]
-use std::os::unix::prelude::AsRawFd;
 
 pub mod embedded_can_impl;
 
@@ -18,35 +18,35 @@ const SLCAN_STANDARD_ID_LEN: usize = 3;
 const SLCAN_EXTENDED_ID_LEN: usize = 8;
 
 const BELL: u8 = 0x07;
-const CARRIAGE_RETURN: u8 = '\r' as u8;
+const CARRIAGE_RETURN: u8 = b'\r';
 
 const HEX_LUT: &[u8] = "0123456789ABCDEF".as_bytes();
 
 #[repr(u8)]
 pub enum BitRate {
-    Setup10Kbit = '0' as u8,
-    Setup20Kbit = '1' as u8,
-    Setup50Kbit = '2' as u8,
-    Setup100Kbit = '3' as u8,
-    Setup125Kbit = '4' as u8,
-    Setup250Kbit = '5' as u8,
-    Setup500Kbit = '6' as u8,
-    Setup800Kbit = '7' as u8,
-    Setup1Mbit = '8' as u8,
+    Setup10Kbit = b'0',
+    Setup20Kbit = b'1',
+    Setup50Kbit = b'2',
+    Setup100Kbit = b'3',
+    Setup125Kbit = b'4',
+    Setup250Kbit = b'5',
+    Setup500Kbit = b'6',
+    Setup800Kbit = b'7',
+    Setup1Mbit = b'8',
 }
 
 #[repr(u8)]
 pub enum Command {
     /// Setup with standard CAN [bit rates](BitRate).
-    Setup = 'S' as u8,
+    Setup = b'S',
     /// Open the CAN channel in normal mode (sending & receiving).
-    Open = 'O' as u8,
+    Open = b'O',
     /// Close the CAN channel.
-    Close = 'C' as u8,
+    Close = b'C',
     /// Transmit a standard (11bit) CAN frame.
-    TransmitStandardFrame = 't' as u8,
+    TransmitStandardFrame = b't',
     /// Transmit an extended (29bit) CAN frame.
-    TransmitExtendedFrame = 'T' as u8,
+    TransmitExtendedFrame = b'T',
 }
 
 impl TryFrom<u8> for Command {
@@ -80,6 +80,15 @@ pub struct CanSocket<P: SerialPort> {
     error: bool,
 }
 
+#[derive(Debug)]
+pub struct Error(io::Error);
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Error(value)
+    }
+}
+
 #[cfg(target_family = "unix")]
 impl<P> AsRawFd for CanSocket<P>
 where
@@ -93,12 +102,12 @@ where
 fn hextou8(s: u8) -> Result<u8, ()> {
     let c = s as char;
 
-    if c >= '0' && c <= '9' {
-        Ok(s - '0' as u8)
-    } else if c >= 'a' && c <= 'f' {
-        Ok(s - 'a' as u8 + 10)
-    } else if c >= 'A' && c <= 'F' {
-        Ok(s - 'A' as u8 + 10)
+    if c.is_ascii_digit() {
+        Ok(s - b'0')
+    } else if ('a'..='f').contains(&c) {
+        Ok(s - b'a' + 10)
+    } else if ('A'..='F').contains(&c) {
+        Ok(s - b'A' + 10)
     } else {
         Err(())
     }
@@ -161,6 +170,7 @@ fn u16tohex3(value: u16) -> [u8; 3] {
     [
         hexdigit(value as u32 >> 8),
         hexdigit(value as u32 >> 4),
+        #[allow(clippy::identity_op)]
         hexdigit(value as u32 >> 0),
     ]
 }
@@ -174,6 +184,7 @@ fn u32tohex8(value: u32) -> [u8; 8] {
         hexdigit(value >> 12),
         hexdigit(value >> 8),
         hexdigit(value >> 4),
+        #[allow(clippy::identity_op)]
         hexdigit(value >> 0),
     ]
 }
@@ -183,6 +194,7 @@ fn bytestohex(data: &[u8]) -> Vec<u8> {
 
     for byte in data {
         buf.push(hexdigit((byte >> 4) as u32));
+        #[allow(clippy::identity_op)]
         buf.push(hexdigit((byte >> 0) as u32));
     }
 
@@ -224,23 +236,23 @@ impl<P: SerialPort> CanSocket<P> {
 
     pub fn open(&mut self, bitrate: BitRate) -> io::Result<()> {
         self.port
-            .write(&[Command::Setup as u8, bitrate as u8, '\r' as u8])?;
-        self.port.write(&[Command::Open as u8, '\r' as u8])?;
+            .write_all(&[Command::Setup as u8, bitrate as u8, b'\r'])?;
+        self.port.write_all(&[Command::Open as u8, b'\r'])?;
 
         Ok(())
     }
 
     pub fn close(&mut self) -> io::Result<()> {
-        self.port.write(&[Command::Close as u8, '\r' as u8])?;
+        self.port.write_all(&[Command::Close as u8, b'\r'])?;
 
         Ok(())
     }
 
-    pub fn write(&mut self, id: Id, data: &[u8]) -> io::Result<usize> {
+    pub fn write(&mut self, id: Id, data: &[u8]) -> Result<usize, crate::Error> {
         let dlc = data.len();
 
         if dlc > 8 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "data length"));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "data length").into());
         }
 
         let mut buf = Vec::<u8>::with_capacity(6 + 2 * dlc);
@@ -258,9 +270,10 @@ impl<P: SerialPort> CanSocket<P> {
 
         buf.push(hexdigit(dlc as u32));
         buf.extend_from_slice(&bytestohex(data));
-        buf.push('\r' as u8);
+        buf.push(b'\r');
 
-        self.port.write(buf.as_slice())
+        let len = self.port.write(buf.as_slice())?;
+        Ok(len)
     }
 
     pub fn read(&mut self) -> io::Result<CanFrame> {
