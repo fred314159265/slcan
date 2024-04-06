@@ -67,6 +67,7 @@ impl TryFrom<u8> for Command {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct CanFrame {
     pub id: Id,
     pub dlc: usize,
@@ -82,6 +83,12 @@ pub struct CanSocket<P: SerialPort> {
 
 #[derive(Debug)]
 pub struct Error(io::Error);
+
+impl Error {
+    pub fn kind(&self) -> io::ErrorKind {
+        self.0.kind()
+    }
+}
 
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {

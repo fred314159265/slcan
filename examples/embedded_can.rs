@@ -1,11 +1,20 @@
-use embedded_can::Can;
+//! Basic example using the serial crate for the serial communications, which continuously
+//! reads frames from the SLCAN device and prints them to the console.
+//!
+//! Example execution using COM1 on Windows:
+//! ```
+//! cargo r --example embedded_can COM1
+//! ```
+
+use embedded_can::blocking::Can;
+use std::io::ErrorKind;
 
 fn main() {
     let arg = std::env::args().nth(1);
     let port = match arg {
-        Some(filename) => {
-            println!("{}", filename);
-            serial::open(&filename)
+        Some(port_name) => {
+            println!("Opening serial port: {}", port_name);
+            serial::open(&port_name)
         }
         None => {
             eprintln!("usage: macos_example <TTY path>");
@@ -19,13 +28,13 @@ fn main() {
     can.open(slcan::BitRate::Setup1Mbit).unwrap();
 
     loop {
-        match can.try_receive() {
+        match can.receive() {
             Ok(frame) => println!("{}", frame),
-            Err(nb::Error::WouldBlock) => (),
-            Err(nb::Error::Other(error)) => match error.kind() {
-                std::io::ErrorKind::TimedOut => (),
-                _ => eprintln!("{:?}", error),
-            },
+            Err(e) if e.kind() == ErrorKind::WouldBlock => (),
+            Err(e) if e.kind() == ErrorKind::TimedOut => (),
+            Err(e) => {
+                eprintln!("{:?}", e);
+            }
         }
     }
 }
