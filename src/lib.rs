@@ -106,7 +106,7 @@ where
     }
 }
 
-fn hextou8(s: u8) -> Result<u8, ()> {
+fn hex_to_u8(s: u8) -> Result<u8, ()> {
     let c = s as char;
 
     if c.is_ascii_digit() {
@@ -120,32 +120,34 @@ fn hextou8(s: u8) -> Result<u8, ()> {
     }
 }
 
-fn hex2tou8(s: &[u8]) -> Result<u8, ()> {
-    let msn = hextou8(s[0])?;
-    let lsn = hextou8(s[1])?;
-
-    Ok((msn << 4) | lsn)
+fn hex2_to_u8(s: &[u8]) -> Result<u8, ()> {
+    if let [msn, lsn] = s[..2] {
+        let msn = hex_to_u8(msn)?;
+        let lsn = hex_to_u8(lsn)?;
+        Ok((msn << 4) | lsn)
+    } else {
+        Err(())
+    }
 }
 
 fn unpack_data(s: &[u8], len: usize) -> Result<[u8; 8], ()> {
-    let mut buf = [u8::default(); 8];
+    let mut buf = [0u8; 8];
 
-    for i in 0..len {
+    for (i, b) in buf.iter_mut().take(len).enumerate() {
         let offset = 2 * i;
-
-        buf[i] = hex2tou8(&s[offset..])?;
+        *b = hex2_to_u8(&s[offset..])?;
     }
 
     Ok(buf)
 }
 
-fn hextou16(buf: &[u8]) -> Result<u16, ()> {
+fn hex_to_u16(buf: &[u8]) -> Result<u16, ()> {
     let mut value = 0u16;
 
     for s in buf.iter() {
         value <<= 4;
 
-        match hextou8(*s) {
+        match hex_to_u8(*s) {
             Ok(byte) => value |= byte as u16,
             Err(_) => return Err(()),
         }
@@ -154,13 +156,13 @@ fn hextou16(buf: &[u8]) -> Result<u16, ()> {
     Ok(value)
 }
 
-fn hextou32(buf: &[u8]) -> Result<u32, ()> {
+fn hex_to_u32(buf: &[u8]) -> Result<u32, ()> {
     let mut value = 0u32;
 
     for s in buf.iter() {
         value <<= 4;
 
-        match hextou8(*s) {
+        match hex_to_u8(*s) {
             Ok(byte) => value |= byte as u32,
             Err(_) => return Err(()),
         }
@@ -319,7 +321,7 @@ impl<P: SerialPort> CanSocket<P> {
 
         match cmd {
             Ok(Command::TransmitStandardFrame) => {
-                let id = match hextou16(
+                let id = match hex_to_u16(
                     &self.rbuff[SLCAN_CMD_LEN..SLCAN_CMD_LEN + SLCAN_STANDARD_ID_LEN],
                 ) {
                     Ok(value) => value,
@@ -345,7 +347,7 @@ impl<P: SerialPort> CanSocket<P> {
                 }
             }
             Ok(Command::TransmitExtendedFrame) => {
-                let id = match hextou32(
+                let id = match hex_to_u32(
                     &self.rbuff[SLCAN_CMD_LEN..SLCAN_CMD_LEN + SLCAN_EXTENDED_ID_LEN],
                 ) {
                     Ok(value) => value,
