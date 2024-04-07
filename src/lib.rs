@@ -20,8 +20,6 @@ const SLCAN_EXTENDED_ID_LEN: usize = 8;
 const BELL: u8 = 0x07;
 const CARRIAGE_RETURN: u8 = b'\r';
 
-const HEX_LUT: &[u8] = "0123456789ABCDEF".as_bytes();
-
 #[repr(u8)]
 pub enum BitRate {
     Setup10Kbit = b'0',
@@ -171,43 +169,11 @@ fn hex_to_u32(buf: &[u8]) -> Result<u32, ()> {
     Ok(value)
 }
 
-fn hexdigit(value: u32) -> u8 {
-    HEX_LUT[(value & 0xF) as usize]
-}
-
-fn u16tohex3(value: u16) -> [u8; 3] {
-    [
-        hexdigit(value as u32 >> 8),
-        hexdigit(value as u32 >> 4),
-        #[allow(clippy::identity_op)]
-        hexdigit(value as u32 >> 0),
-    ]
-}
-
-fn u32tohex8(value: u32) -> [u8; 8] {
-    [
-        hexdigit(value >> 28),
-        hexdigit(value >> 24),
-        hexdigit(value >> 20),
-        hexdigit(value >> 16),
-        hexdigit(value >> 12),
-        hexdigit(value >> 8),
-        hexdigit(value >> 4),
-        #[allow(clippy::identity_op)]
-        hexdigit(value >> 0),
-    ]
-}
-
-fn bytestohex(data: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::<u8>::with_capacity(2 * data.len());
-
-    for byte in data {
-        buf.push(hexdigit((byte >> 4) as u32));
-        #[allow(clippy::identity_op)]
-        buf.push(hexdigit((byte >> 0) as u32));
-    }
-
-    buf
+fn bytes_to_hex(data: &[u8]) -> String {
+    data.iter().fold(String::new(), |mut acc, x| {
+        acc.push_str(&format!("{:02X}", x));
+        acc
+    })
 }
 
 impl CanFrame {
@@ -264,24 +230,24 @@ impl<P: SerialPort> CanSocket<P> {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "data length").into());
         }
 
-        let mut buf = Vec::<u8>::with_capacity(6 + 2 * dlc);
+        let mut buf = String::with_capacity(6 + 2 * dlc);
 
         match id {
             Id::Standard(standard_id) => {
-                buf.push(Command::TransmitStandardFrame as u8);
-                buf.extend_from_slice(&u16tohex3(standard_id.as_raw()));
+                buf.push(Command::TransmitStandardFrame as u8 as char);
+                buf.push_str(&format!("{:03X}", standard_id.as_raw()));
             }
             Id::Extended(extended_id) => {
-                buf.push(Command::TransmitExtendedFrame as u8);
-                buf.extend_from_slice(&u32tohex8(extended_id.as_raw()));
+                buf.push(Command::TransmitExtendedFrame as u8 as char);
+                buf.push_str(&format!("{:08X}", extended_id.as_raw()));
             }
         }
 
-        buf.push(hexdigit(dlc as u32));
-        buf.extend_from_slice(&bytestohex(data));
-        buf.push(b'\r');
+        buf.push_str(&format!("{:1X}", dlc));
+        buf.push_str(&bytes_to_hex(data));
+        buf.push(b'\r' as u8 as char);
 
-        let len = self.port.write(buf.as_slice())?;
+        let len = self.port.write(buf.as_bytes())?;
         Ok(len)
     }
 
@@ -299,7 +265,7 @@ impl<P: SerialPort> CanSocket<P> {
                 self.rcount = 0;
 
                 if valid {
-                    return self.bump();
+                    return self.process_frame();
                 }
             } else if !self.error {
                 if self.rcount < SLCAN_MTU {
@@ -316,7 +282,7 @@ impl<P: SerialPort> CanSocket<P> {
         Err(io::Error::new(io::ErrorKind::WouldBlock, ""))
     }
 
-    fn bump(&mut self) -> io::Result<CanFrame> {
+    fn process_frame(&mut self) -> io::Result<CanFrame> {
         let cmd = self.rbuff[0].try_into();
 
         match cmd {
@@ -374,13 +340,5 @@ impl<P: SerialPort> CanSocket<P> {
             }
             _ => Err(io::Error::new(io::ErrorKind::WouldBlock, "")),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
     }
 }
